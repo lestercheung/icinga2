@@ -150,24 +150,7 @@ static void FireSuppressedNotifications(Checkable* checkable)
 			bool still_applies = checkable->NotificationReasonApplies(type);
 
 			if (still_applies) {
-				bool still_suppressed;
-
-				switch (type) {
-					case NotificationProblem:
-						/* Fall through. */
-					case NotificationRecovery:
-						still_suppressed = !checkable->IsReachable(DependencyNotification) || checkable->IsInDowntime() || checkable->IsAcknowledged();
-						break;
-					case NotificationFlappingStart:
-						/* Fall through. */
-					case NotificationFlappingEnd:
-						still_suppressed = checkable->IsInDowntime();
-						break;
-					default:
-						break;
-				}
-
-				if (!still_suppressed && !checkable->IsLikelyToBeCheckedSoon()) {
+				if (!checkable->NotificationReasonSuppressed(type) && !checkable->IsLikelyToBeCheckedSoon()) {
 					Checkable::OnNotificationsRequested(checkable, type, checkable->GetLastCheckResult(), "", "", nullptr);
 
 					subtract |= type;
@@ -230,6 +213,27 @@ bool Checkable::NotificationReasonApplies(NotificationType type)
 			return !IsFlapping();
 		default:
 			VERIFY(!"Checkable#NotificationReasonStillApplies(): given type not implemented");
+			return false;
+	}
+}
+
+/**
+ * Returns whether *this not allows sending a notification of type type right now.
+ *
+ * @param type The type of notification to send (or not to send).
+ *
+ * @return Whether not to send the notification.
+ */
+bool Checkable::NotificationReasonSuppressed(NotificationType type)
+{
+	switch (type) {
+		case NotificationProblem:
+		case NotificationRecovery:
+			return !IsReachable(DependencyNotification) || IsInDowntime() || IsAcknowledged();
+		case NotificationFlappingStart:
+		case NotificationFlappingEnd:
+			return IsInDowntime();
+		default:
 			return false;
 	}
 }

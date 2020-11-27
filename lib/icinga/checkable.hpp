@@ -172,6 +172,7 @@ public:
 	void ValidateMaxCheckAttempts(const Lazy<int>& lvalue, const ValidationUtils& value) final;
 
 	bool NotificationReasonApplies(NotificationType type);
+	bool NotificationReasonSuppressed(NotificationType type);
 	bool IsLikelyToBeCheckedSoon();
 
 	static void IncreasePendingChecks();
