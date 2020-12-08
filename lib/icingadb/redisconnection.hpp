@@ -18,6 +18,8 @@
 #include <boost/asio/local/stream_protocol.hpp>
 #include <boost/asio/read.hpp>
 #include <boost/asio/read_until.hpp>
+#include <boost/asio/ssl/context.hpp>
+#include <boost/asio/ssl/stream.hpp>
 #include <boost/asio/streambuf.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/lexical_cast.hpp>
@@ -66,8 +68,11 @@ namespace icinga
 			CheckResult
 		};
 
-		RedisConnection(const String& host, const int port, const String& path,
-			const String& password = "", const int db = 0);
+		RedisConnection(const String& host, int port, const String& path, const String& password, int db,
+			bool useTls, const String& certPath, const String& keyPath, const String& caPath, const String& crlPath,
+			const String& tlsProtocolmin, const String& cipherList, double tlsHandshakeTimeout);
+
+		void UpdateSSLContext();
 
 		void Start();
 
@@ -124,6 +129,9 @@ namespace icinga
 
 		typedef boost::asio::buffered_stream<Tcp::socket> TcpConn;
 		typedef boost::asio::buffered_stream<Unix::socket> UnixConn;
+		typedef boost::asio::buffered_stream<boost::asio::ssl::stream<Tcp::socket>> TlsConn;
+
+		Shared<boost::asio::ssl::context>::Ptr m_SSLContext;
 
 		template<class AsyncReadStream>
 		static Value ReadRESP(AsyncReadStream& stream, boost::asio::yield_context& yc);
@@ -137,7 +145,9 @@ namespace icinga
 		template<class AsyncWriteStream>
 		static void WriteInt(AsyncWriteStream& stream, intmax_t i, boost::asio::yield_context& yc);
 
-		RedisConnection(boost::asio::io_context& io, String host, int port, String path, String password, int db);
+		RedisConnection(boost::asio::io_context& io, String host, int port, String path, String password,
+			int db, bool useTls, String certPath, String keyPath, String caPath, String crlPath,
+			String tlsProtocolmin, String cipherList, double tlsHandshakeTimeout);
 
 		void Connect(boost::asio::yield_context& yc);
 		void ReadLoop(boost::asio::yield_context& yc);
@@ -158,9 +168,18 @@ namespace icinga
 		String m_Password;
 		int m_DbIndex;
 
+		String m_CertPath;
+		String m_KeyPath;
+		String m_CaPath;
+		String m_CrlPath;
+		String m_TlsProtocolmin;
+		String m_CipherList;
+		double m_TlsHandshakeTimeout;
+
 		boost::asio::io_context::strand m_Strand;
 		Shared<TcpConn>::Ptr m_TcpConn;
 		Shared<UnixConn>::Ptr m_UnixConn;
+		Shared<TlsConn>::Ptr m_TlsConn;
 		Atomic<bool> m_Connecting, m_Connected, m_Started;
 
 		struct {

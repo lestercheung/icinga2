@@ -4,11 +4,13 @@
 #include "base/array.hpp"
 #include "base/convert.hpp"
 #include "base/defer.hpp"
+#include "base/exception.hpp"
 #include "base/io-engine.hpp"
 #include "base/logger.hpp"
 #include "base/objectlock.hpp"
 #include "base/string.hpp"
 #include "base/tcpsocket.hpp"
+#include "base/tlsutility.hpp"
 #include <boost/asio.hpp>
 #include <boost/coroutine/exceptions.hpp>
 #include <boost/date_time/posix_time/posix_time_duration.hpp>
@@ -23,15 +25,69 @@
 using namespace icinga;
 namespace asio = boost::asio;
 
-RedisConnection::RedisConnection(const String& host, const int port, const String& path, const String& password, const int db) :
-	RedisConnection(IoEngine::Get().GetIoContext(), host, port, path, password, db)
+RedisConnection::RedisConnection(const String& host, int port, const String& path, const String& password, int db,
+	bool useTls, const String& certPath, const String& keyPath, const String& caPath, const String& crlPath,
+	const String& tlsProtocolmin, const String& cipherList, double tlsHandshakeTimeout)
+	: RedisConnection(IoEngine::Get().GetIoContext(), host, port, path, password, db,
+	  useTls, certPath, keyPath, caPath, crlPath, tlsProtocolmin, cipherList, tlsHandshakeTimeout)
 {
 }
 
-RedisConnection::RedisConnection(boost::asio::io_context& io, String host, int port, String path, String password, int db)
-	: m_Host(std::move(host)), m_Port(port), m_Path(std::move(path)), m_Password(std::move(password)), m_DbIndex(db),
+RedisConnection::RedisConnection(boost::asio::io_context& io, String host, int port, String path, String password,
+	int db, bool useTls, String certPath, String keyPath, String caPath, String crlPath,
+	String tlsProtocolmin, String cipherList, double tlsHandshakeTimeout)
+	: m_Host(std::move(host)), m_Port(port), m_Path(std::move(path)), m_Password(std::move(password)),
+	  m_DbIndex(db), m_CertPath(std::move(certPath)), m_KeyPath(std::move(keyPath)),
+	  m_CaPath(std::move(caPath)), m_CrlPath(std::move(crlPath)), m_TlsProtocolmin(std::move(tlsProtocolmin)),
+	  m_CipherList(std::move(cipherList)), m_TlsHandshakeTimeout(tlsHandshakeTimeout),
 	  m_Connecting(false), m_Connected(false), m_Started(false), m_Strand(io), m_QueuedWrites(io), m_QueuedReads(io)
 {
+	if (useTls) {
+		UpdateSSLContext();
+	}
+}
+
+void RedisConnection::UpdateSSLContext()
+{
+	namespace ssl = boost::asio::ssl;
+
+	Shared<ssl::context>::Ptr context;
+
+	try {
+		context = MakeAsioSslContext(m_CertPath, m_KeyPath, m_CaPath);
+	} catch (const std::exception& ex) {
+		BOOST_THROW_EXCEPTION(ScriptError("Cannot make SSL context: " + DiagnosticInformation(ex) + "; cert path: '"
+			+ m_CertPath + "'; key path: '" + m_KeyPath + "'; ca path: '" + m_CaPath + "'."));
+	}
+
+	if (!m_CrlPath.IsEmpty()) {
+		try {
+			AddCRLToSSLContext(context, m_CrlPath);
+		} catch (const std::exception& ex) {
+			BOOST_THROW_EXCEPTION(ScriptError("Cannot add certificate revocation list to SSL context: "
+				+ DiagnosticInformation(ex) + "; crl path: '" + m_CrlPath + "'."));
+		}
+	}
+
+	if (!m_CipherList.IsEmpty()) {
+		try {
+			SetCipherListToSSLContext(context, m_CipherList);
+		} catch (const std::exception& ex) {
+			BOOST_THROW_EXCEPTION(ScriptError("Cannot set cipher list to SSL context: "
+				+ DiagnosticInformation(ex) + "; cipher list: '" + m_CipherList + "'."));
+		}
+	}
+
+	if (!m_TlsProtocolmin.IsEmpty()){
+		try {
+			SetTlsProtocolminToSSLContext(context, m_TlsProtocolmin);
+		} catch (const std::exception& ex) {
+			BOOST_THROW_EXCEPTION(ScriptError("Cannot set minimum TLS protocol version to SSL context: "
+				+ DiagnosticInformation(ex) + "; tls_protocolmin: '" + GetTlsProtocolmin() + "'."));
+		}
+	}
+
+	m_SSLContext = std::move(context);
 }
 
 void RedisConnection::Start()
